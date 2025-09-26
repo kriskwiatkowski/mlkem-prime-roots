@@ -1,0 +1,206 @@
+name: ML-KEM Prime Roots CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    # Run tests daily at 6:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # Install any additional dependencies here if needed
+        # pip install -r requirements.txt
+        
+    - name: Lint with flake8
+      run: |
+        pip install flake8
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        
+    - name: Run unit tests
+      run: |
+        python -m pytest test_mlkem_prime_roots.py -v
+        
+    - name: Run ML-KEM script
+      run: |
+        python mlkem_prime_roots.py
+        
+    - name: Verify output file
+      run: |
+        if [ ! -f "mlkem_roots_output.txt" ]; then
+          echo "Error: Output file not generated"
+          exit 1
+        fi
+        
+        # Check file size (should be substantial)
+        file_size=$(wc -c < mlkem_roots_output.txt)
+        if [ $file_size -lt 1000 ]; then
+          echo "Error: Output file too small ($file_size bytes)"
+          exit 1
+        fi
+        
+        echo "✓ Output file generated successfully ($file_size bytes)"
+        
+    - name: Validate mathematical properties
+      run: |
+        python -c "
+import mlkem_prime_roots
+
+# Verify key ML-KEM properties
+Q = 3329
+N = 256  
+ZETA = 17
+
+# Test that q is prime
+def is_prime(n):
+    if n < 2: return False
+    for i in range(2, int(n**0.5) + 1):
+        if n % i == 0: return False
+    return True
+
+assert is_prime(Q), f'{Q} is not prime'
+print('✓ Q = 3329 is prime')
+
+# Test that 256 divides q-1
+assert (Q - 1) % N == 0, f'{N} does not divide {Q-1}'
+print('✓ 256 divides (q-1)')
+
+# Test that 17 is a primitive 256th root of unity
+zeta_n = mlkem_prime_roots.mod_exp(ZETA, N, Q)
+assert zeta_n == 1, f'17^256 mod 3329 = {zeta_n}, not 1'
+print('✓ 17^256 ≡ 1 (mod 3329)')
+
+# Test that 17 has order exactly 256
+order = 1
+power = ZETA
+while power != 1 and order <= N:
+    power = (power * ZETA) % Q
+    order += 1
+assert order == N, f'Order of 17 is {order}, not {N}'
+print('✓ Order of 17 is exactly 256')
+
+print('All mathematical properties verified!')
+"
+        
+    - name: Upload test artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-python-${{ matrix.python-version }}
+        path: |
+          mlkem_roots_output.txt
+          
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+        
+    - name: Install security tools
+      run: |
+        pip install bandit safety
+        
+    - name: Run Bandit security scan
+      run: |
+        bandit -r . -f json -o bandit-report.json || true
+        bandit -r . || true
+        
+    - name: Check dependencies for known vulnerabilities
+      run: |
+        # Create a minimal requirements file for safety check
+        echo "# No external dependencies" > requirements.txt
+        safety check --json || true
+        
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-scan-results
+        path: |
+          bandit-report.json
+          
+  performance-test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+        
+    - name: Install performance testing tools
+      run: |
+        pip install time-machine memory-profiler
+        
+    - name: Run performance tests
+      run: |
+        echo "Testing script performance..."
+        
+        # Time the script execution
+        start_time=$(date +%s.%N)
+        python mlkem_prime_roots.py > /dev/null
+        end_time=$(date +%s.%N)
+        
+        execution_time=$(echo "$end_time - $start_time" | bc -l)
+        echo "Execution time: ${execution_time} seconds"
+        
+        # Check that execution time is reasonable (< 10 seconds)
+        if (( $(echo "$execution_time > 10" | bc -l) )); then
+          echo "Warning: Script execution took longer than expected"
+        else
+          echo "✓ Script execution time is acceptable"
+        fi
+        
+    - name: Memory usage test
+      run: |
+        # Test memory usage doesn't exceed reasonable limits
+        python -c "
+import resource
+import mlkem_prime_roots
+
+# Get memory usage
+usage_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+mlkem_prime_roots.main()
+usage_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
+# On Linux, ru_maxrss is in KB
+memory_used = usage_after - usage_before
+print(f'Memory used: {memory_used} KB')
+
+# Check memory usage is reasonable (< 100MB)
+if memory_used > 100 * 1024:
+    print('Warning: High memory usage detected')
+else:
+    print('✓ Memory usage is acceptable')
+"

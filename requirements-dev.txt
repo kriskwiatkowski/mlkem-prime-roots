@@ -1,0 +1,8 @@
+# No external dependencies required
+# This project uses only Python standard library modules
+
+# Development dependencies (optional)
+pytest>=7.0.0
+flake8>=5.0.0
+bandit>=1.7.0
+safety>=2.0.0
