@@ -2,7 +2,7 @@
 
 A Python script that calculates the prime roots used by ML-KEM (Module-Lattice-Based Key Encapsulation Mechanism) for Number Theoretic Transform (NTT) operations.
 
-![CI Status](https://github.com/YOUR_USERNAME/mlkem-prime-roots/actions/workflows/ci.yml/badge.svg)
+![CI Status](https://github.com/kriskwiatkowski/mlkem-prime-roots/actions/workflows/ci.yml/badge.svg)
 
 ## Overview
 
